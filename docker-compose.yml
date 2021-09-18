@@ -1,0 +1,12 @@
+---
+version: "3.6"
+
+services:
+  prometheus-connectivity-exporter:
+    build: .
+    image: prometheus-connectivity-exporter
+    read_only: true
+    environment:
+      - "HTTP_ADDR=0.0.0.0:9293"
+    #ports:
+    #  - "9293"
