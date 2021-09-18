@@ -31,7 +31,13 @@ endpoint.
   latency and throughput. This requires the target to run a
   [chargen2p server](https://pkg.go.dev/github.com/tommie/chargen2p).
 
-### Metrics
+### Target Names
+
+Targets are hostnames or IP-addresses. The special name
+`default-gateway.internal` makes the exporter look up (one of) the
+host's default gateway(s).
+
+## Metrics
 
 The following metrics are exported as part of a `/probe`, depending
 on the kind of check being performed:
