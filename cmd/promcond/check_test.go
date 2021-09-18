@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"testing"
 	"time"
 
@@ -13,6 +14,10 @@ import (
 )
 
 func TestCheckPing(t *testing.T) {
+	if os.Getenv("CIRCLECI") == "true" {
+		t.Skip("Ping test requires privileges CircleCI doesn't provide")
+	}
+
 	ctx := context.Background()
 
 	pi := pingInterval
