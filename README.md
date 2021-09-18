@@ -1,5 +1,7 @@
 # Prometheus Connectivity Exporter
 
+[![CircleCI](https://circleci.com/gh/tommie/prometheus-connectivity-exporter/tree/main.svg?style=svg)](https://circleci.com/gh/tommie/prometheus-connectivity-exporter/tree/main)
+
 This is a [Prometheus](https://prometheus.io/) exporter that probes
 connectivity to other network hosts. This can be useful to diagnose
 regressions in client machines using (unreliable) ISPs. The use on
