@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -12,6 +13,7 @@ import (
 var (
 	httpAddr      = flag.String("http-addr", "localhost:0", "TCP-address to listen for HTTP connections on.")
 	standaloneLog = flag.Bool("standalone-log", true, "Log to stderr, with time prefix.")
+	checks        = checkSliceFlag("check", "Add a check to perform, in the format 'kind=X,af=Y,host=Z,service=W,interval=T'.")
 )
 
 func main() {
@@ -29,7 +31,12 @@ func run(ctx context.Context) error {
 		log.SetOutput(os.Stdout)
 	}
 
-	l, s, cleanup, err := startCollectorServer(ctx, *httpAddr, nil)
+	if len(*checks) == 0 {
+		return fmt.Errorf("no -check flags provided")
+	}
+	startChecks(ctx, *checks, checker{})
+
+	l, s, cleanup, err := startMetricsServer(ctx, *httpAddr)
 	if err != nil {
 		return err
 	}

@@ -10,12 +10,68 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-ping/ping"
 	"github.com/tommie/chargen2p"
 )
 
+func TestRunCheck(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	runCheck(ctx, ConnectivityCheck{Kind: KindHostPing, Network: "ip", Host: "localhost", Interval: 10 * time.Millisecond}, waitChecker{done: cancel}, 0)
+}
+
+func TestDoCheck(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("ping", func(t *testing.T) {
+		var chkr fakeChecker
+		if err := doCheck(ctx, &ConnectivityCheck{Kind: KindHostPing, Network: "ip", Host: "localhost"}, &chkr); err != nil {
+			t.Fatalf("doCheck failed: %v", err)
+		}
+
+		if want := 1; chkr.NumPingCalls != want {
+			t.Errorf("NumPingCalls: got %d, want %d", chkr.NumPingCalls, want)
+		}
+	})
+
+	t.Run("floodping", func(t *testing.T) {
+		var chkr fakeChecker
+		if err := doCheck(ctx, &ConnectivityCheck{Kind: KindHostFloodPing, Network: "ip", Host: "localhost"}, &chkr); err != nil {
+			t.Fatalf("doCheck failed: %v", err)
+		}
+
+		if want := 1; chkr.NumPingCalls != want {
+			t.Errorf("NumPingCalls: got %d, want %d", chkr.NumPingCalls, want)
+		}
+	})
+
+	t.Run("connect", func(t *testing.T) {
+		var chkr fakeChecker
+		if err := doCheck(ctx, &ConnectivityCheck{Kind: KindConnect, Network: "ip", Host: "localhost", Service: "echo"}, &chkr); err != nil {
+			t.Fatalf("doCheck failed: %v", err)
+		}
+
+		if want := 1; chkr.NumConnectCalls != want {
+			t.Errorf("NumConnectCalls: got %d, want %d", chkr.NumConnectCalls, want)
+		}
+	})
+
+	t.Run("transfer", func(t *testing.T) {
+		var chkr fakeChecker
+		if err := doCheck(ctx, &ConnectivityCheck{Kind: KindTransfer, Network: "ip", Host: "localhost", Service: "echo"}, &chkr); err != nil {
+			t.Fatalf("doCheck failed: %v", err)
+		}
+
+		if want := 1; chkr.NumTransferCalls != want {
+			t.Errorf("NumTransferCalls: got %d, want %d", chkr.NumTransferCalls, want)
+		}
+	})
+}
+
 func TestCheckPing(t *testing.T) {
-	if os.Getenv("CIRCLECI") == "true" {
-		t.Skip("Ping test requires privileges CircleCI doesn't provide")
+	if os.Getenv("CI") == "true" {
+		t.Skip("Ping test requires privileges CircleCI/Docker doesn't provide")
 	}
 
 	ctx := context.Background()
@@ -126,4 +182,42 @@ func acceptAndEcho(l net.Listener) error {
 
 		conn.Close()
 	}
+}
+
+type fakeChecker struct {
+	NumPingCalls     int
+	NumConnectCalls  int
+	NumTransferCalls int
+}
+
+func (c *fakeChecker) CheckPing(ctx context.Context, network, host string, flood bool) (*ping.Statistics, error) {
+	c.NumPingCalls++
+	return &ping.Statistics{AvgRtt: 1 * time.Second, PacketLoss: 0.5}, nil
+}
+func (c *fakeChecker) CheckConnect(ctx context.Context, network, host, service string) (time.Duration, error) {
+	c.NumConnectCalls++
+	return 2 * time.Second, nil
+}
+func (c *fakeChecker) CheckTransfer(ctx context.Context, network, host, service string) (nbytes int, dur time.Duration, dialDur time.Duration, err error) {
+	c.NumTransferCalls++
+	return 1024, 4 * time.Second, 3 * time.Second, nil
+}
+
+func (*fakeChecker) Resolver() netResolver {
+	return defaultResolver
+}
+
+type waitChecker struct {
+	Checker
+
+	done func()
+}
+
+func (c waitChecker) CheckPing(ctx context.Context, network, host string, flood bool) (*ping.Statistics, error) {
+	c.done()
+	return &ping.Statistics{}, nil
+}
+
+func (waitChecker) Resolver() netResolver {
+	return defaultResolver
 }

@@ -6,7 +6,12 @@ services:
     build: .
     image: prometheus-connectivity-exporter
     read_only: true
+    restart: unless-stopped
+    user: nobody
     environment:
       - "HTTP_ADDR=0.0.0.0:9293"
+      - "CHECKS=kind=ping,host=default-gateway.internal,interval=1m"
+    sysctls:
+      net.ipv4.ping_group_range: "0 2147483647"
     #ports:
     #  - "9293"

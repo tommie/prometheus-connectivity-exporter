@@ -3,16 +3,172 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
+	"math/rand"
 	"net"
+	"strconv"
 	"time"
 
 	"github.com/go-ping/ping"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tommie/chargen2p"
 )
 
-// pingInterval sets the interval for KindHostPing. It's a test
-// injection point.
-var pingInterval = 1 * time.Second
+var (
+	// pingInterval sets the interval for KindHostPing. It's a test
+	// injection point.
+	pingInterval = 1 * time.Second
+
+	checkFailures = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "connectivity",
+		Name:      "check_failures",
+		Help:      "Failures during checks.",
+	}, []string{"af", "host", "service", "kind"})
+
+	// In this case, reporting the ratio itself is probably
+	// right. I can't see that we'd want this weighted by number
+	// of packages rather than by host.
+	hostPacketLoss = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: "connectivity",
+		Name:      "host_packet_loss",
+		Help:      "Packet loss between instance and remote host.",
+	}, []string{"af", "host"})
+	hostRTT = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: "connectivity",
+		Name:      "host_rtt",
+		Help:      "RTT between instance and remote host.",
+	}, []string{"af", "host"})
+	serviceLatency = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: "connectivity",
+		Name:      "service_latency",
+		Help:      "Latency between the instance and a remote service.",
+	}, []string{"af", "host", "service", "kind"})
+	serviceThroughput = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: "connectivity",
+		Name:      "service_throughput",
+		Help:      "Whether the instance can use a remote service.",
+	}, []string{"af", "host", "service", "kind"})
+)
+
+func init() {
+	prometheus.MustRegister(checkFailures)
+	prometheus.MustRegister(hostPacketLoss)
+	prometheus.MustRegister(hostRTT)
+	prometheus.MustRegister(serviceLatency)
+	prometheus.MustRegister(serviceThroughput)
+}
+
+func startChecks(ctx context.Context, checks []ConnectivityCheck, chkr Checker) {
+	// We want data as early as possible, but avoid overlapping
+	// checks. The randomization domain depends on the number of
+	// checks and how slow they are, not the check's interval.
+	for _, chk := range checks {
+		go runCheck(ctx, chk, chkr, time.Duration(rand.Intn(int(10*time.Second)*len(checks))))
+	}
+}
+
+// ConnectivityCheck encapsulates a single check against a host or service on a host.
+type ConnectivityCheck struct {
+	Kind    ConnectivityCheckKind
+	Network string
+	Host    string
+	Service string
+
+	Interval time.Duration
+}
+
+// A Checker is used by startChecks to do the actual checking.
+type Checker interface {
+	CheckPing(ctx context.Context, network, host string, flood bool) (*ping.Statistics, error)
+	CheckConnect(ctx context.Context, network, host, service string) (time.Duration, error)
+	CheckTransfer(ctx context.Context, network, host, service string) (nbytes int, dur time.Duration, dialDur time.Duration, err error)
+	Resolver() netResolver
+}
+
+func runCheck(ctx context.Context, chk ConnectivityCheck, chkr Checker, delay time.Duration) {
+	select {
+	case <-time.After(delay):
+		// continue
+	case <-ctx.Done():
+		return
+	}
+
+	t := time.NewTicker(chk.Interval)
+	defer t.Stop()
+	for {
+		log.Printf("Running check %s for %s/%s...", chk.Kind.String(), chk.Network, chk.Host)
+		if err := doCheck(ctx, &chk, chkr); err != nil {
+			checkFailures.WithLabelValues(chk.Network, chk.Host, chk.Service, chk.Kind.String()).Inc()
+			log.Printf("Failed check %s for %s/%s (ignored): %v", chk.Kind.String(), chk.Network, chk.Host, err)
+		}
+
+		select {
+		case <-t.C:
+			// continue
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+func doCheck(ctx context.Context, chk *ConnectivityCheck, chkr Checker) error {
+	// We resolve before the checking code so we're sure we're not
+	// measuring default resolver performance/availability.
+	addrs, err := chkr.Resolver().LookupIP(ctx, chk.Network, chk.Host)
+	if err != nil {
+		return err
+	}
+	network := "ip6"
+	if addrs[0].To4() != nil {
+		network = "ip4"
+	}
+	host := addrs[0].String()
+	var port string
+	if chk.Service != "" {
+		prt, err := chkr.Resolver().LookupPort(ctx, transportForNetwork(chk.Network, chk.Kind), chk.Service)
+		if err != nil {
+			return err
+		}
+		port = strconv.FormatInt(int64(prt), 10)
+	}
+
+	switch chk.Kind {
+	case KindHostPing:
+		st, err := chkr.CheckPing(ctx, network, host, false)
+		if err != nil {
+			return err
+		}
+		hostRTT.WithLabelValues(chk.Network, chk.Host).Set(float64(st.AvgRtt) / float64(time.Second))
+
+	case KindHostFloodPing:
+		st, err := chkr.CheckPing(ctx, network, host, true)
+		if err != nil {
+			return err
+		}
+		hostPacketLoss.WithLabelValues(chk.Network, chk.Host).Set(st.PacketLoss)
+		hostRTT.WithLabelValues(chk.Network, chk.Host).Set(float64(st.AvgRtt) / float64(time.Second))
+
+	case KindConnect:
+		dur, err := chkr.CheckConnect(ctx, network, host, port)
+		if err != nil {
+			return err
+		}
+		serviceLatency.WithLabelValues(chk.Network, chk.Host, chk.Service, chk.Kind.String()).Set(float64(dur) / float64(time.Second))
+
+	case KindTransfer:
+		nbytes, dur, connDur, err := chkr.CheckTransfer(ctx, network, host, port)
+		if err != nil {
+			return err
+		}
+		serviceLatency.WithLabelValues(chk.Network, chk.Host, chk.Service, chk.Kind.String()).Set(float64(connDur) / float64(time.Second))
+		serviceThroughput.WithLabelValues(chk.Network, chk.Host, chk.Service, chk.Kind.String()).Set(float64(nbytes) / (float64(dur) / float64(time.Second)))
+
+	default:
+		return fmt.Errorf("unknown check kind: %v", chk.Kind)
+	}
+
+	return nil
+}
 
 type checker struct{}
 
@@ -74,6 +230,10 @@ func (checker) checkTransfer(ctx context.Context, network, host, service string,
 		return 0, 0, 0, err
 	}
 	return ti.NumReadBytes, ti.ReadDuration, ti.DialDuration, nil
+}
+
+func (checker) Resolver() netResolver {
+	return defaultResolver
 }
 
 // transportForNetwork returns the appropriate transport-layer

@@ -10,18 +10,25 @@ servers in a controlled network is probably limited.
 ## Usage
 
 Run it with Docker or Docker Compose. The default port is 9232. The
-`/metrics` endpoint contains information about the exporter itself,
-while `/probe` is the [multi-target
-exporter](https://prometheus.io/docs/guides/multi-target-exporter/)
-endpoint.
+`/metrics` endpoint contains information about the checks and the
+exporter itself.
 
-### URL Parameters
+### Command Line Flags
+
+The most important flag is `-check`, which adds a new check to the
+list. Each flag value is on the format `key=value[,key=value...]`.
+
+The keys are
 
 * `kind`: the kind of check to perform. See the following sections.
-* `af`: the address family. One of `ip`, `ip4` and `ip6`.
+* `af`: the address family. One of `ip`, `ip4` and `ip6`. The
+  default is `ip`.
 * `target`: the host address. A hostname or IP-address.
 * `service`: some check kinds use a specific service/port. Either a
   symbolic service name, like `ssh`, or a number.
+* `interval`: a time duration value like `1m10s`. This is how often
+  the check should run. If a check takes longer than the interval,
+  checks will be skipped, but the pace is kept.
 
 ### Check Kinds
 
@@ -52,6 +59,18 @@ on the kind of check being performed:
 * `connectivity_service_throughput{af,host,service,kind}`:
   throughput estimation for talking to the given service, in bytes
   per second.
+
+## Prior Work
+
+* [`blackbox_exporter`](https://github.com/prometheus/blackbox_exporter)
+  is a connectivity tester for the data center. It uses [multi-target
+  exporter](https://prometheus.io/docs/guides/multi-target-exporter/). The
+  main difference is our support for `default-gateway.internal`, and
+  that the connectivity exporter cares about which host is able to
+  connect to which target. The Blackbox exporter mostly just cares
+  about the target.
+* The various [`ping`](https://github.com/czerwonk/ping_exporter)
+  exporters.
 
 ## License
 

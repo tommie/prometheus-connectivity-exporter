@@ -4,7 +4,6 @@ import (
 	"context"
 	"io/ioutil"
 	"net/http"
-	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -12,12 +11,12 @@ import (
 	"sync"
 )
 
-func TestStartCollectorServer(t *testing.T) {
+func TestStartMetricsServer(t *testing.T) {
 	ctx := context.Background()
 
-	l, s, cleanup, err := startCollectorServer(ctx, "localhost:0", fakeChecker{})
+	l, s, cleanup, err := startMetricsServer(ctx, "localhost:0")
 	if err != nil {
-		t.Fatalf("startCollectorServer failed: %v", err)
+		t.Fatalf("startMetricsServer failed: %v", err)
 	}
 	defer cleanup()
 	defer s.Close()
@@ -28,17 +27,7 @@ func TestStartCollectorServer(t *testing.T) {
 		}
 	}()
 
-	u := url.URL{
-		Scheme: "http",
-		Host:   s.Addr,
-		Path:   "/probe",
-		RawQuery: url.Values{
-			"kind":    []string{"connect"},
-			"target":  []string{"localhost"},
-			"service": []string{"http"},
-		}.Encode(),
-	}
-	resp, err := http.Get(u.String())
+	resp, err := http.Get("http://" + s.Addr + "/metrics")
 	if err != nil {
 		t.Fatalf("Get failed: %v", err)
 	}
@@ -49,7 +38,7 @@ func TestStartCollectorServer(t *testing.T) {
 		t.Fatalf("ReadAll failed: %v", err)
 	}
 
-	want := `connectivity_service_latency{af="ip",host="localhost",kind="connect",service="http"}`
+	want := `promhttp_metric_handler_requests_total{code="200"} 0`
 	if !strings.Contains(string(got), want) {
 		t.Errorf("Get: want %q, got:\n%s", want, string(got))
 	}

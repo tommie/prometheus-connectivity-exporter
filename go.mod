@@ -7,7 +7,7 @@ require (
 	github.com/jackpal/gateway v1.0.7
 	github.com/miekg/dns v1.1.43
 	github.com/prometheus/client_golang v1.11.0
-	github.com/tommie/chargen2p v0.0.0-20210916143340-2ea5526863c4
+	github.com/tommie/chargen2p v0.0.0-20210920140623-c70efe6ba065
 	golang.org/x/sys v0.0.0-20210603081109-ebe580a85c40
 	golang.org/x/text v0.3.3
 )
